@@ -16,6 +16,7 @@ import BillingReportsView from './components/BillingReportsView';
 function FleetAppContent() {
   const { currentUser } = useFleet();
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // If not logged in, display the secure login screen
   if (!currentUser) {
@@ -48,19 +49,30 @@ function FleetAppContent() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--bg-primary)' }}>
+      <Navbar 
+        activeTab={activeTab} 
+        setActiveTab={setActiveTab}
+        mobileMenuOpen={mobileMenuOpen}
+        setMobileMenuOpen={setMobileMenuOpen}
+      />
       
-      <div style={{ display: 'flex', flex: 1 }}>
-        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <div style={{ display: 'flex', flex: 1, position: 'relative' }}>
+        <Sidebar 
+          activeTab={activeTab} 
+          setActiveTab={setActiveTab}
+          mobileMenuOpen={mobileMenuOpen}
+          setMobileMenuOpen={setMobileMenuOpen}
+        />
         
         <main style={{
           flex: 1,
-          padding: '1.75rem',
+          padding: '1.25rem',
           maxWidth: '1600px',
           width: '100%',
           margin: '0 auto',
-          overflowY: 'auto'
+          overflowY: 'auto',
+          minWidth: 0
         }}>
           {renderActiveView()}
         </main>

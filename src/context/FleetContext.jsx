@@ -831,19 +831,26 @@ export function FleetProvider({ children }) {
     setRawAttendance(prev => prev.filter(a => a.id !== id));
   };
 
-  const quickSettleAbsentPayment = (attendanceId, paymentAmount, vendorName = '', paymentType = 'Online / UPI') => {
+  const quickSettleAbsentPayment = (attendanceId, paymentAmount, vendorName = '', paymentType = 'Online / UPI', customTime = null) => {
+    const now = new Date();
+    const timeStr = customTime || now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const dateStr = now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
+
     setRawAttendance(prev => prev.map(a => {
       if (a.id === attendanceId) {
         return {
           ...a,
-          status: 'Absent',
+          status: 'Absent', // Regular driver strictly marked Absent
           isAdhocReplacement: true,
           adhocDetails: {
             ...a.adhocDetails,
             vendorName: vendorName || a.adhocDetails?.vendorName || 'Outsourced Fleet Cab',
             costAmount: Number(paymentAmount) || 0,
             paymentType: paymentType,
-            paymentStatus: 'Paid'
+            paymentStatus: 'PAID', // Stamped as PAID
+            paidAtTime: timeStr,
+            paidAtDate: dateStr,
+            paidBySupervisor: currentUser?.name || 'Supervisor'
           }
         };
       }
