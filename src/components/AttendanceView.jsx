@@ -8,7 +8,7 @@ import {
   Car, 
   Plus, 
   Search, 
-  Calendar, 
+  Calendar as CalendarIcon, 
   AlertCircle, 
   CheckCircle2, 
   Clock, 
@@ -16,6 +16,11 @@ import {
   Trash2,
   Download,
   Zap,
+  ChevronLeft,
+  ChevronRight,
+  Receipt,
+  FileSpreadsheet,
+  AlertTriangle,
   ArrowRight
 } from 'lucide-react';
 
@@ -26,22 +31,23 @@ export default function AttendanceView() {
     deleteAttendanceRecord, 
     quickSettleAbsentPayment,
     drivers, 
+    companies,
     currentUser
   } = useFleet();
 
+  const [viewMode, setViewMode] = useState('weekly_grid'); // 'weekly_grid' or 'list_view'
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState('all'); // all, Present, Absent, adhoc
-  const [filterDate, setFilterDate] = useState('2026-10-02');
+  const [selectedWeekOffset, setSelectedWeekOffset] = useState(0); // 0 = current week
   const [showModal, setShowModal] = useState(false);
   const [editingRecord, setEditingRecord] = useState(null);
 
-  // Quick Inline Absent Payment Settlement Modal
+  // Quick Settle Modal
   const [quickPayRecord, setQuickPayRecord] = useState(null);
   const [quickPayAmount, setQuickPayAmount] = useState('');
   const [quickPayVendor, setQuickPayVendor] = useState('');
   const [quickPayMode, setQuickPayMode] = useState('Online / UPI');
 
-  // Form State
+  // Attendance Form
   const [formData, setFormData] = useState({
     date: '2026-10-02',
     day: 'Friday',
@@ -62,13 +68,76 @@ export default function AttendanceView() {
     }
   });
 
+  // Generate 7 days of the currently selected week (Oct 2026 reference week)
+  const getWeekDates = (offset = 0) => {
+    // Base Friday: 2026-10-02
+    const baseDate = new Date(2026, 9, 2); // Oct 2, 2026 (Friday)
+    baseDate.setDate(baseDate.getDate() + (offset * 7));
+
+    // Find Monday of this week (subtract 4 days from Friday)
+    const monday = new Date(baseDate);
+    const dayOfWeek = monday.getDay(); // 5 = Friday
+    const distanceToMonday = (dayOfWeek + 6) % 7;
+    monday.setDate(monday.getDate() - distanceToMonday);
+
+    const weekDays = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const isoStr = d.toISOString().split('T')[0];
+      const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
+      const formattedDate = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      weekDays.push({ date: isoStr, dayName, formattedDate, fullDate: d });
+    }
+    return weekDays;
+  };
+
+  const currentWeekDates = getWeekDates(selectedWeekOffset);
+  const weekStartStr = currentWeekDates[0].formattedDate;
+  const weekEndStr = currentWeekDates[6].formattedDate;
+
+  // Helper to find attendance record for a specific driver and date
+  const getRecord = (driverId, dateStr) => {
+    return attendance.find(a => a.driverId === driverId && a.date === dateStr);
+  };
+
+  // Open modal with pre-selected driver & date
+  const handleCellClick = (driver, dateObj) => {
+    const existing = getRecord(driver.id, dateObj.date);
+    if (existing) {
+      handleOpenModal(existing);
+    } else {
+      setEditingRecord(null);
+      setFormData({
+        date: dateObj.date,
+        day: dateObj.fullDate.toLocaleDateString('en-US', { weekday: 'long' }),
+        driverId: driver.id,
+        status: 'Present',
+        loginTime: '06:00 AM',
+        logoutTime: '02:30 PM',
+        absenceReason: '',
+        isAdhocReplacement: false,
+        adhocDetails: {
+          vendorName: '',
+          cabRegNo: '',
+          cabType: 'Sedan',
+          replacementDriver: '',
+          costAmount: '',
+          paymentType: 'Online / UPI',
+          paymentStatus: 'Paid'
+        }
+      });
+      setShowModal(true);
+    }
+  };
+
   const handleOpenModal = (record = null) => {
     if (record) {
       setEditingRecord(record);
       setFormData({
         id: record.id,
         date: record.date,
-        day: record.day || getDayName(record.date),
+        day: record.day,
         driverId: record.driverId,
         status: record.status,
         loginTime: record.loginTime || '',
@@ -89,8 +158,8 @@ export default function AttendanceView() {
       setEditingRecord(null);
       const defaultDrv = drivers[0];
       setFormData({
-        date: filterDate || new Date().toISOString().split('T')[0],
-        day: getDayName(filterDate || new Date().toISOString().split('T')[0]),
+        date: '2026-10-02',
+        day: 'Friday',
         driverId: defaultDrv ? defaultDrv.id : '',
         status: 'Present',
         loginTime: '06:00 AM',
@@ -111,12 +180,6 @@ export default function AttendanceView() {
     setShowModal(true);
   };
 
-  const getDayName = (dateStr) => {
-    if (!dateStr) return 'Friday';
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-US', { weekday: 'long' });
-  };
-
   const handleSubmit = (e) => {
     e.preventDefault();
     const selectedDriver = drivers.find(d => d.id === formData.driverId);
@@ -127,7 +190,6 @@ export default function AttendanceView() {
       vehicleType: selectedDriver ? selectedDriver.assignedVehicleType : 'Sedan',
       companyId: selectedDriver ? selectedDriver.assignedCompanyId : 'COMP-101',
       routeName: selectedDriver ? selectedDriver.routeName : 'Default Route',
-      day: getDayName(formData.date),
       adhocDetails: {
         ...formData.adhocDetails,
         costAmount: Number(formData.adhocDetails.costAmount) || 0
@@ -147,55 +209,71 @@ export default function AttendanceView() {
     setQuickPayVendor('');
   };
 
-  // Filter attendance
-  const filteredAttendance = attendance.filter(item => {
-    const matchesSearch = 
-      item.driverName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.routeName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.adhocDetails?.vendorName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.absenceReason?.toLowerCase().includes(searchQuery.toLowerCase());
+  // Quick 1-Click "Mark All Drivers Present for Today"
+  const handleMarkAllPresentToday = () => {
+    const todayStr = '2026-10-02';
+    drivers.forEach(drv => {
+      const exists = getRecord(drv.id, todayStr);
+      if (!exists) {
+        saveAttendanceRecord({
+          date: todayStr,
+          day: 'Friday',
+          driverId: drv.id,
+          driverName: drv.name,
+          vehicleType: drv.assignedVehicleType || 'Sedan',
+          companyId: drv.assignedCompanyId || 'COMP-101',
+          routeName: drv.routeName || 'Assigned Route',
+          status: 'Present',
+          loginTime: '06:00 AM',
+          logoutTime: '02:30 PM',
+          absenceReason: '',
+          isAdhocReplacement: false,
+          adhocDetails: { vendorName: '', cabRegNo: '', cabType: '', costAmount: 0, paymentType: 'None', paymentStatus: 'None' }
+        });
+      }
+    });
+  };
 
-    const matchesStatus = 
-      filterStatus === 'all' ? true :
-      filterStatus === 'adhoc' ? item.isAdhocReplacement :
-      item.status === filterStatus;
+  // Filter drivers for the calendar table
+  const filteredDrivers = drivers.filter(d => 
+    d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    d.routeName.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-    const matchesDate = filterDate ? item.date === filterDate : true;
+  // Financial calculations to prevent missed payments
+  const totalAdhocExpenseAll = attendance
+    .filter(a => a.isAdhocReplacement)
+    .reduce((acc, curr) => acc + (Number(curr.adhocDetails?.costAmount) || 0), 0);
 
-    return matchesSearch && matchesStatus && matchesDate;
-  });
+  const pendingAdhocPayouts = attendance
+    .filter(a => a.isAdhocReplacement && a.adhocDetails?.paymentStatus === 'Pending');
 
-  const totalPresent = attendance.filter(a => (filterDate ? a.date === filterDate : true) && a.status === 'Present').length;
-  const totalAbsent = attendance.filter(a => (filterDate ? a.date === filterDate : true) && a.status === 'Absent').length;
-  const totalAdhoc = attendance.filter(a => (filterDate ? a.date === filterDate : true) && a.isAdhocReplacement).length;
-  const totalAdhocPayout = attendance
-    .filter(a => (filterDate ? a.date === filterDate : true) && a.isAdhocReplacement)
+  const pendingAmountTotal = pendingAdhocPayouts
     .reduce((acc, curr) => acc + (Number(curr.adhocDetails?.costAmount) || 0), 0);
 
   const exportCSV = () => {
-    const headers = ['Date', 'Day', 'Driver Name', 'Route', 'Cab Type', 'Status', 'Login Time', 'Logout Time', 'Absence Reason', 'Is Ad-hoc Replacement', 'Vendor Name', 'Adhoc Cab Reg', 'Adhoc Cost (INR)', 'Payment Status'];
+    const headers = ['Date', 'Day', 'Driver Name', 'Route', 'Status', 'Login Time', 'Logout Time', 'Absence Reason', 'Is Adhoc Replacement', 'Vendor Name', 'Adhoc Payment Amount (INR)', 'Payment Status', 'Payment Mode'];
     const rows = attendance.map(a => [
       a.date,
       a.day,
       `"${a.driverName}"`,
       `"${a.routeName}"`,
-      a.vehicleType,
       a.status,
-      a.loginTime,
-      a.logoutTime,
-      `"${a.absenceReason || 'N/A'}"`,
+      a.loginTime || 'N/A',
+      a.logoutTime || 'N/A',
+      `"${a.absenceReason || 'Regular Duty'}"`,
       a.isAdhocReplacement ? 'YES' : 'NO',
       `"${a.adhocDetails?.vendorName || 'N/A'}"`,
-      a.adhocDetails?.cabRegNo || 'N/A',
       a.adhocDetails?.costAmount || 0,
-      a.adhocDetails?.paymentStatus || 'N/A'
+      a.adhocDetails?.paymentStatus || 'N/A',
+      a.adhocDetails?.paymentType || 'N/A'
     ]);
 
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Fleet_Attendance_${currentUser.supervisorId || 'admin'}_${filterDate || 'all'}.csv`);
+    link.setAttribute('download', `Fleet_Monthly_Attendance_Payment_Audit_${currentUser.supervisorId || 'admin'}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -207,404 +285,390 @@ export default function AttendanceView() {
       <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <ClipboardCheck size={26} color="#2563eb" />
-            <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#0f172a' }}>
-              Weekly Attendance & Driver Absent Payment Hub
+            <ClipboardCheck size={28} color="#059669" />
+            <h1 style={{ fontSize: '1.55rem', fontWeight: 800, color: '#0f172a' }}>
+              Weekly Attendance & Monthly Payment Audit Calendar
             </h1>
           </div>
           <p style={{ color: '#64748b', fontSize: '0.875rem', marginTop: '0.25rem' }}>
-            Driver present/absent tracking. Driver absent hone par supervisor replacement cab ka payment input enter karke direct save karein.
+            Visual weekly calendar grid: Click any date to mark Present/Absent, log external replacement cabs, and ensure <strong>zero missed payments</strong> for monthly client billing.
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
           <button onClick={exportCSV} className="btn btn-secondary">
-            <Download size={16} /> Export CSV
+            <Download size={16} /> Export Monthly Audit CSV
+          </button>
+          <button onClick={handleMarkAllPresentToday} className="btn btn-secondary" title="Auto mark all drivers present for today">
+            <CheckCircle2 size={16} color="#059669" /> Mark All Present Today
           </button>
           <button onClick={() => handleOpenModal()} className="btn btn-primary">
-            <Plus size={16} /> Mark / Add Attendance
+            <Plus size={16} /> Mark Entry
           </button>
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid-4">
+      {/* Payment Security & Audit Bar (Prevents missed payments) */}
+      <div className="grid-3">
         <div className="glass-panel" style={{ padding: '1.25rem', borderLeft: '4px solid #059669' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.785rem', color: '#64748b', fontWeight: 700 }}>DRIVERS PRESENT</span>
-            <UserCheck size={20} color="#059669" />
+            <span style={{ fontSize: '0.785rem', color: '#64748b', fontWeight: 700 }}>TOTAL AD-HOC REPLACEMENT PAYMENTS</span>
+            <DollarSign size={20} color="#059669" />
           </div>
           <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '0.35rem', color: '#047857' }}>
-            {totalPresent} <span style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 500 }}>Drivers</span>
+            ₹{totalAdhocExpenseAll.toLocaleString()}
           </div>
-          <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.2rem' }}>
-            On regular roster routes
-          </div>
-        </div>
-
-        <div className="glass-panel" style={{ padding: '1.25rem', borderLeft: '4px solid #dc2626' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.785rem', color: '#64748b', fontWeight: 700 }}>DRIVERS ABSENT</span>
-            <UserX size={20} color="#dc2626" />
-          </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '0.35rem', color: '#b91c1c' }}>
-            {totalAbsent} <span style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 500 }}>Absent</span>
-          </div>
-          <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.2rem' }}>
-            Medical & emergency leaves
+          <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.2rem' }}>
+            Tracked across {attendance.filter(a => a.isAdhocReplacement).length} replacement trips
           </div>
         </div>
 
-        <div className="glass-panel" style={{ padding: '1.25rem', borderLeft: '4px solid #ea580c' }}>
+        <div className="glass-panel" style={{ padding: '1.25rem', borderLeft: `4px solid ${pendingAmountTotal > 0 ? '#ea580c' : '#059669'}` }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.785rem', color: '#64748b', fontWeight: 700 }}>AD-HOC REPLACEMENTS</span>
-            <Car size={20} color="#ea580c" />
+            <span style={{ fontSize: '0.785rem', color: '#64748b', fontWeight: 700 }}>PENDING / UNSETTLED PAYMENTS</span>
+            <AlertTriangle size={20} color={pendingAmountTotal > 0 ? '#ea580c' : '#059669'} />
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '0.35rem', color: '#c2410c' }}>
-            {totalAdhoc} <span style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 500 }}>Dispatched</span>
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '0.35rem', color: pendingAmountTotal > 0 ? '#c2410c' : '#047857' }}>
+            ₹{pendingAmountTotal.toLocaleString()}
           </div>
-          <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.2rem' }}>
-            External outsourced cabs
+          <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.2rem' }}>
+            {pendingAdhocPayouts.length > 0 ? `⚠️ ${pendingAdhocPayouts.length} payment requires supervisor settlement` : '✓ All payments settled'}
           </div>
         </div>
 
-        <div className="glass-panel" style={{ padding: '1.25rem', borderLeft: '4px solid #2563eb' }}>
+        <div className="glass-panel" style={{ padding: '1.25rem', borderLeft: '4px solid #0284c7' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.785rem', color: '#64748b', fontWeight: 700 }}>SUPERVISOR AD-HOC PAYOUT</span>
-            <DollarSign size={20} color="#2563eb" />
+            <span style={{ fontSize: '0.785rem', color: '#64748b', fontWeight: 700 }}>ACTIVE DRIVER ROSTER</span>
+            <UserCheck size={20} color="#0284c7" />
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '0.35rem', color: '#1d4ed8' }}>
-            ₹{totalAdhocPayout.toLocaleString()}
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '0.35rem', color: '#0369a1' }}>
+            {drivers.length} Drivers
           </div>
-          <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.2rem' }}>
-            Direct replacement cost settled
+          <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.2rem' }}>
+            Assigned to {companies.length} corporate clients
           </div>
         </div>
       </div>
 
-      {/* Filter and Date Bar */}
-      <div className="glass-panel" style={{ padding: '1rem 1.25rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', flex: 1 }}>
-          <div style={{ position: 'relative', minWidth: '240px', flex: 1 }}>
-            <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-            <input 
-              type="text"
-              placeholder="Search driver, route, adhoc vendor, absence reason..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="input-control"
-              style={{ paddingLeft: '2.25rem' }}
-            />
+      {/* Week Navigator & View Controls */}
+      <div className="glass-panel" style={{ padding: '1rem 1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+        {/* Search */}
+        <div style={{ position: 'relative', width: '320px' }}>
+          <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+          <input 
+            type="text"
+            placeholder="Search driver name, route..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="input-control"
+            style={{ paddingLeft: '2.25rem' }}
+          />
+        </div>
+
+        {/* Week Navigator Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '0.35rem 0.65rem', borderRadius: '12px' }}>
+          <button 
+            onClick={() => setSelectedWeekOffset(prev => prev - 1)}
+            className="btn btn-secondary btn-sm btn-icon"
+            title="Previous Week"
+          >
+            <ChevronLeft size={16} />
+          </button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0 0.5rem' }}>
+            <CalendarIcon size={16} color="#059669" />
+            <span style={{ fontWeight: 800, color: '#0f172a', fontSize: '0.875rem' }}>
+              Week: {weekStartStr} - {weekEndStr}, 2026
+            </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Calendar size={16} color="#64748b" />
-            <input 
-              type="date"
-              value={filterDate}
-              onChange={(e) => setFilterDate(e.target.value)}
-              className="input-control"
-              style={{ width: '160px' }}
-            />
-            {filterDate && (
-              <button 
-                onClick={() => setFilterDate('')} 
-                className="btn btn-secondary btn-sm"
-              >
-                All Dates
-              </button>
-            )}
-          </div>
+          <button 
+            onClick={() => setSelectedWeekOffset(prev => prev + 1)}
+            className="btn btn-secondary btn-sm btn-icon"
+            title="Next Week"
+          >
+            <ChevronRight size={16} />
+          </button>
 
-          <div style={{ display: 'flex', gap: '0.35rem' }}>
-            {[
-              { id: 'all', label: 'All Records' },
-              { id: 'Present', label: 'Present' },
-              { id: 'Absent', label: 'Absent' },
-              { id: 'adhoc', label: '🚨 Ad-hoc Replaced' }
-            ].map(f => (
-              <button
-                key={f.id}
-                onClick={() => setFilterStatus(f.id)}
-                className={`btn btn-sm ${filterStatus === f.id ? 'btn-primary' : 'btn-secondary'}`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
+          {selectedWeekOffset !== 0 && (
+            <button 
+              onClick={() => setSelectedWeekOffset(0)}
+              className="btn btn-primary btn-sm"
+              style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
+            >
+              Current Week
+            </button>
+          )}
+        </div>
+
+        {/* View Mode Toggle */}
+        <div style={{ display: 'flex', gap: '0.35rem' }}>
+          <button 
+            onClick={() => setViewMode('weekly_grid')}
+            className={`btn btn-sm ${viewMode === 'weekly_grid' ? 'btn-primary' : 'btn-secondary'}`}
+          >
+            📅 Weekly Calendar Matrix
+          </button>
+          <button 
+            onClick={() => setViewMode('list_view')}
+            className={`btn btn-sm ${viewMode === 'list_view' ? 'btn-primary' : 'btn-secondary'}`}
+          >
+            📋 Audit Table View
+          </button>
         </div>
       </div>
 
-      {/* Attendance & Ad-hoc Table */}
-      <div className="table-container">
-        <table className="custom-table">
-          <thead>
-            <tr>
-              <th>Date & Day</th>
-              <th>Driver & Vehicle</th>
-              <th>Assigned Route</th>
-              <th>Status</th>
-              <th>Login / Logout</th>
-              <th>Absence Reason</th>
-              <th>Ad-hoc Replacement Details</th>
-              <th>Supervisor Payment Input (₹)</th>
-              <th style={{ textAlign: 'right' }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredAttendance.length === 0 ? (
+      {/* 1. WEEKLY CALENDAR MATRIX VIEW (Ultra Intuitive for Supervisors) */}
+      {viewMode === 'weekly_grid' && (
+        <div className="table-container" style={{ boxShadow: '0 4px 20px rgba(15,23,42,0.06)' }}>
+          <table className="custom-table" style={{ minWidth: '1000px' }}>
+            <thead>
               <tr>
-                <td colSpan={9} style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>
-                  <AlertCircle size={36} color="#94a3b8" style={{ margin: '0 auto 0.75rem', display: 'block' }} />
-                  <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0f172a' }}>No attendance records found for this supervisor filter.</p>
-                  <p style={{ fontSize: '0.825rem', marginTop: '0.25rem' }}>Click "Mark / Add Attendance" to log a record.</p>
-                </td>
+                <th style={{ width: '220px', background: '#f1f5f9' }}>Driver & Assigned Route</th>
+                {currentWeekDates.map(day => (
+                  <th key={day.date} style={{ textAlign: 'center', background: day.date === '2026-10-02' ? '#ecfdf5' : '#f8fafc' }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: day.date === '2026-10-02' ? '#047857' : '#0f172a' }}>
+                      {day.dayName}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: day.date === '2026-10-02' ? '#059669' : '#64748b' }}>
+                      {day.formattedDate} {day.date === '2026-10-02' ? '(Today)' : ''}
+                    </div>
+                  </th>
+                ))}
+                <th style={{ textAlign: 'center', width: '130px', background: '#f1f5f9' }}>Weekly Total (₹)</th>
               </tr>
-            ) : (
-              filteredAttendance.map((record) => {
-                const isAbsent = record.status === 'Absent';
-                const hasAdhoc = record.isAdhocReplacement;
+            </thead>
+            <tbody>
+              {filteredDrivers.map(drv => {
+                // Calculate driver weekly total replacement cost
+                let driverWeeklyAdhocCost = 0;
+                let presentCount = 0;
+                let absentCount = 0;
+
+                currentWeekDates.forEach(day => {
+                  const rec = getRecord(drv.id, day.date);
+                  if (rec) {
+                    if (rec.status === 'Present') presentCount++;
+                    if (rec.status === 'Absent') {
+                      absentCount++;
+                      if (rec.isAdhocReplacement && rec.adhocDetails?.costAmount) {
+                        driverWeeklyAdhocCost += Number(rec.adhocDetails.costAmount);
+                      }
+                    }
+                  }
+                });
 
                 return (
-                  <tr key={record.id} style={{ background: hasAdhoc ? '#fffbeb' : undefined }}>
-                    <td>
-                      <div style={{ fontWeight: 800, color: '#0f172a' }}>{record.date}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{record.day || 'Weekday'}</div>
-                    </td>
-
-                    <td>
-                      <div style={{ fontWeight: 800, color: '#0f172a' }}>{record.driverName}</div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.2rem' }}>
-                        <span className={`badge ${record.vehicleType === 'SUV' ? 'badge-suv' : 'badge-sedan'}`}>
-                          {record.vehicleType || 'Cab'}
+                  <tr key={drv.id}>
+                    {/* Driver Profile */}
+                    <td style={{ background: '#fcfdfd' }}>
+                      <div style={{ fontWeight: 800, color: '#0f172a', fontSize: '0.925rem' }}>{drv.name}</div>
+                      <div style={{ fontSize: '0.725rem', color: '#64748b', marginTop: '0.15rem' }}>
+                        {drv.routeName.slice(0, 24)}...
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.35rem', marginTop: '0.35rem' }}>
+                        <span className={`badge ${drv.assignedVehicleType === 'SUV' ? 'badge-suv' : 'badge-sedan'}`} style={{ fontSize: '0.65rem' }}>
+                          {drv.assignedVehicleType}
                         </span>
-                        <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{record.driverId}</span>
+                        <span style={{ fontSize: '0.68rem', color: '#047857', fontWeight: 700 }}>
+                          {presentCount}P / {absentCount}A
+                        </span>
                       </div>
                     </td>
 
-                    <td>
-                      <div style={{ fontSize: '0.85rem', color: '#334155', maxWidth: '200px', fontWeight: 500 }}>
-                        {record.routeName}
-                      </div>
-                    </td>
+                    {/* 7 Days Calendar Cells */}
+                    {currentWeekDates.map(day => {
+                      const rec = getRecord(drv.id, day.date);
 
-                    <td>
-                      <span className={`badge ${record.status === 'Present' ? 'badge-present' : 'badge-absent'}`}>
-                        {record.status === 'Present' ? '✓ Present' : '✕ Absent'}
-                      </span>
-                    </td>
-
-                    <td>
-                      {record.status === 'Present' ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-                          <div style={{ fontSize: '0.8rem', color: '#059669', display: 'flex', alignItems: 'center', gap: '0.3rem', fontWeight: 600 }}>
-                            <Clock size={12} /> In: {record.loginTime || '--:--'}
-                          </div>
-                          <div style={{ fontSize: '0.8rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                            <Clock size={12} /> Out: {record.logoutTime || '--:--'}
-                          </div>
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: '0.8rem', color: '#dc2626', fontWeight: 600 }}>— On Leave —</span>
-                      )}
-                    </td>
-
-                    <td style={{ maxWidth: '200px' }}>
-                      {record.absenceReason ? (
-                        <div style={{
-                          fontSize: '0.8rem',
-                          color: '#b91c1c',
-                          background: '#fef2f2',
-                          border: '1px solid #fecaca',
-                          padding: '0.4rem 0.6rem',
-                          borderRadius: '6px',
-                          fontWeight: 500
-                        }}>
-                          {record.absenceReason}
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Regular Duty</span>
-                      )}
-                    </td>
-
-                    <td>
-                      {hasAdhoc ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                          <span className="badge badge-adhoc">
-                            🚨 Outsourced Cab
-                          </span>
-                          <div style={{ fontSize: '0.825rem', fontWeight: 700, color: '#0f172a' }}>
-                            {record.adhocDetails?.vendorName || 'Outsourced Vendor'}
-                          </div>
-                          <div style={{ fontSize: '0.725rem', color: '#64748b' }}>
-                            {record.adhocDetails?.cabRegNo || 'KA-XX-0000'} ({record.adhocDetails?.cabType || 'Sedan'})
-                          </div>
-                        </div>
-                      ) : isAbsent ? (
-                        <button
-                          onClick={() => {
-                            setQuickPayRecord(record);
-                            setQuickPayAmount(record.adhocDetails?.costAmount || '');
-                            setQuickPayVendor(record.adhocDetails?.vendorName || '');
+                      return (
+                        <td 
+                          key={day.date}
+                          onClick={() => handleCellClick(drv, day)}
+                          style={{
+                            textAlign: 'center',
+                            cursor: 'pointer',
+                            padding: '0.65rem 0.4rem',
+                            borderRight: '1px solid #f1f5f9',
+                            transition: 'all 0.15s ease'
                           }}
-                          className="btn btn-warning btn-sm"
-                          style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                         >
-                          <Zap size={13} /> Settle Payment
-                        </button>
-                      ) : (
-                        <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>None</span>
-                      )}
-                    </td>
+                          {!rec ? (
+                            <div style={{
+                              padding: '0.45rem',
+                              borderRadius: '8px',
+                              border: '1px dashed #cbd5e1',
+                              color: '#94a3b8',
+                              fontSize: '0.72rem',
+                              fontWeight: 600
+                            }}>
+                              + Click to Mark
+                            </div>
+                          ) : rec.status === 'Present' ? (
+                            <div style={{
+                              background: '#ecfdf5',
+                              border: '1px solid #a7f3d0',
+                              borderRadius: '8px',
+                              padding: '0.4rem 0.3rem'
+                            }}>
+                              <div style={{ fontWeight: 800, color: '#047857', fontSize: '0.785rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem' }}>
+                                <UserCheck size={13} /> Present
+                              </div>
+                              <div style={{ fontSize: '0.68rem', color: '#059669', marginTop: '0.1rem' }}>
+                                {rec.loginTime ? rec.loginTime.split(' ')[0] : '06:00'} - {rec.logoutTime ? rec.logoutTime.split(' ')[0] : '14:30'}
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{
+                              background: '#fff7ed',
+                              border: '1px solid #fed7aa',
+                              borderRadius: '8px',
+                              padding: '0.4rem 0.3rem',
+                              boxShadow: '0 2px 6px rgba(234, 88, 12, 0.12)'
+                            }}>
+                              <div style={{ fontWeight: 800, color: '#b91c1c', fontSize: '0.785rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem' }}>
+                                <UserX size={13} /> Absent
+                              </div>
 
-                    {/* SUPERVISOR PAYMENT INPUT DISPLAY */}
-                    <td>
-                      {hasAdhoc ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                          <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#c2410c' }}>
-                            ₹{Number(record.adhocDetails?.costAmount || 0).toLocaleString()}
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                            <span className="badge badge-present" style={{ fontSize: '0.68rem', padding: '0.1rem 0.4rem' }}>
-                              {record.adhocDetails?.paymentStatus || 'Paid'}
-                            </span>
-                            <span style={{ fontSize: '0.725rem', color: '#64748b' }}>
-                              via {record.adhocDetails?.paymentType || 'UPI'}
-                            </span>
-                          </div>
-                        </div>
-                      ) : isAbsent ? (
-                        <span style={{ fontSize: '0.785rem', color: '#ea580c', fontWeight: 600 }}>Payment Pending</span>
-                      ) : (
-                        <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>₹0.00</span>
-                      )}
-                    </td>
+                              {rec.isAdhocReplacement ? (
+                                <div style={{ marginTop: '0.2rem' }}>
+                                  <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#c2410c' }}>
+                                    ₹{rec.adhocDetails?.costAmount}
+                                  </div>
+                                  <div style={{ fontSize: '0.65rem', color: rec.adhocDetails?.paymentStatus === 'Paid' ? '#047857' : '#ea580c', fontWeight: 700 }}>
+                                    {rec.adhocDetails?.paymentStatus || 'Paid'}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: '0.65rem', color: '#ea580c', fontWeight: 700, marginTop: '0.15rem' }}>
+                                  No Cab Sent
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
 
-                    <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.4rem' }}>
-                        <button 
-                          onClick={() => handleOpenModal(record)} 
-                          className="btn btn-secondary btn-sm btn-icon"
-                          title="Edit Attendance & Payment"
-                        >
-                          <Edit2 size={14} color="#2563eb" />
-                        </button>
-                        <button 
-                          onClick={() => {
-                            if (window.confirm('Delete this attendance record?')) {
-                              deleteAttendanceRecord(record.id);
-                            }
-                          }} 
-                          className="btn btn-secondary btn-sm btn-icon"
-                          title="Delete Record"
-                        >
-                          <Trash2 size={14} color="#dc2626" />
-                        </button>
+                    {/* Weekly Total Amount */}
+                    <td style={{ textAlign: 'center', background: '#fcfdfd' }}>
+                      <div style={{ fontWeight: 800, fontSize: '1.05rem', color: driverWeeklyAdhocCost > 0 ? '#c2410c' : '#0f172a' }}>
+                        ₹{driverWeeklyAdhocCost.toLocaleString()}
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                        Ad-hoc Payouts
                       </div>
                     </td>
                   </tr>
                 );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* QUICK INLINE SETTLE ABSENT PAYMENT MODAL */}
-      {quickPayRecord && (
-        <div className="modal-overlay" onClick={() => setQuickPayRecord(null)}>
-          <div className="modal-content" style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <DollarSign size={20} color="#ea580c" />
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>
-                  Enter Absent Cab Replacement Payment
-                </h3>
-              </div>
-              <button onClick={() => setQuickPayRecord(null)} style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1.25rem' }}>✕</button>
-            </div>
-
-            <form onSubmit={handleQuickPaySubmit}>
-              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <div style={{ background: '#fef2f2', border: '1px solid #fecaca', padding: '0.75rem', borderRadius: '10px' }}>
-                  <div style={{ fontWeight: 800, color: '#991b1b', fontSize: '0.9rem' }}>
-                    Driver Absent: {quickPayRecord.driverName}
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: '#b91c1c', marginTop: '0.15rem' }}>
-                    Reason: {quickPayRecord.absenceReason || 'Medical / Emergency leave'}
-                  </div>
-                </div>
-
-                <div className="input-group">
-                  <label className="input-label" style={{ color: '#c2410c' }}>
-                    Payment Amount (Iske Kitne Paise Hore) (₹) *
-                  </label>
-                  <input 
-                    type="number"
-                    placeholder="e.g. 1850"
-                    className="input-control"
-                    style={{ borderColor: '#ea580c', fontWeight: 800, fontSize: '1.15rem', color: '#c2410c' }}
-                    value={quickPayAmount}
-                    onChange={(e) => setQuickPayAmount(e.target.value)}
-                    required
-                    autoFocus
-                  />
-                </div>
-
-                <div className="input-group">
-                  <label className="input-label">Outsourced Vendor / Driver Name</label>
-                  <input 
-                    type="text"
-                    placeholder="e.g. Sri Balaji Travels / Outsourced Cab"
-                    className="input-control"
-                    value={quickPayVendor}
-                    onChange={(e) => setQuickPayVendor(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="input-group">
-                  <label className="input-label">Payment Mode</label>
-                  <select
-                    className="select-control"
-                    value={quickPayMode}
-                    onChange={(e) => setQuickPayMode(e.target.value)}
-                  >
-                    <option value="Online / UPI">Online / UPI (GooglePay / PhonePe)</option>
-                    <option value="Cash">Cash Handover</option>
-                    <option value="Vendor Account">Vendor Monthly Ledger</option>
-                    <option value="Direct Client Billable">Direct Client Billable</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="modal-footer">
-                <button type="button" onClick={() => setQuickPayRecord(null)} className="btn btn-secondary">Cancel</button>
-                <button type="submit" className="btn btn-warning">
-                  <CheckCircle2 size={16} /> Save Payment & Settle
-                </button>
-              </div>
-            </form>
-          </div>
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
-      {/* Main Add/Edit Attendance Modal */}
+      {/* 2. LIST VIEW TABLE */}
+      {viewMode === 'list_view' && (
+        <div className="table-container">
+          <table className="custom-table">
+            <thead>
+              <tr>
+                <th>Date & Day</th>
+                <th>Driver & Vehicle</th>
+                <th>Assigned Route</th>
+                <th>Attendance</th>
+                <th>Login / Logout</th>
+                <th>Absence Reason</th>
+                <th>Ad-hoc Replacement Details</th>
+                <th>Payment Amount (₹)</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {attendance.map(rec => (
+                <tr key={rec.id} style={{ background: rec.isAdhocReplacement ? '#fffbeb' : undefined }}>
+                  <td>
+                    <div style={{ fontWeight: 800, color: '#0f172a' }}>{rec.date}</div>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{rec.day}</div>
+                  </td>
+                  <td>
+                    <div style={{ fontWeight: 800, color: '#0f172a' }}>{rec.driverName}</div>
+                    <span className={`badge ${rec.vehicleType === 'SUV' ? 'badge-suv' : 'badge-sedan'}`} style={{ fontSize: '0.68rem', marginTop: '0.2rem' }}>
+                      {rec.vehicleType}
+                    </span>
+                  </td>
+                  <td>{rec.routeName}</td>
+                  <td>
+                    <span className={`badge ${rec.status === 'Present' ? 'badge-present' : 'badge-absent'}`}>
+                      {rec.status === 'Present' ? '✓ Present' : '✕ Absent'}
+                    </span>
+                  </td>
+                  <td>{rec.loginTime || '--'} / {rec.logoutTime || '--'}</td>
+                  <td>{rec.absenceReason || 'Regular Duty'}</td>
+                  <td>
+                    {rec.isAdhocReplacement ? (
+                      <div>
+                        <span className="badge badge-adhoc">🚨 Outsourced Cab</span>
+                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0f172a', marginTop: '0.2rem' }}>
+                          {rec.adhocDetails?.vendorName}
+                        </div>
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>None</span>
+                    )}
+                  </td>
+                  <td>
+                    {rec.isAdhocReplacement ? (
+                      <div>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#c2410c' }}>
+                          ₹{Number(rec.adhocDetails?.costAmount || 0).toLocaleString()}
+                        </div>
+                        <span className="badge badge-present" style={{ fontSize: '0.65rem' }}>
+                          {rec.adhocDetails?.paymentStatus || 'Paid'} ({rec.adhocDetails?.paymentType || 'UPI'})
+                        </span>
+                      </div>
+                    ) : (
+                      '₹0.00'
+                    )}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    <button onClick={() => handleOpenModal(rec)} className="btn btn-secondary btn-sm btn-icon">
+                      <Edit2 size={14} color="#059669" />
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (window.confirm('Delete record?')) deleteAttendanceRecord(rec.id);
+                      }} 
+                      className="btn btn-secondary btn-sm btn-icon"
+                      style={{ marginLeft: '0.35rem' }}
+                    >
+                      <Trash2 size={14} color="#dc2626" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Main Mark Attendance & Payment Modal */}
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <ClipboardCheck size={20} color="#2563eb" />
+                <ClipboardCheck size={20} color="#059669" />
                 <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>
-                  {editingRecord ? 'Edit Attendance & Absent Payment' : 'Mark Driver Attendance / Absent Replacement'}
+                  {editingRecord ? 'Edit Attendance & Absent Payment' : 'Mark Driver Attendance & Settlement'}
                 </h3>
               </div>
               <button onClick={() => setShowModal(false)} style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1.25rem' }}>✕</button>
             </div>
 
             <form onSubmit={handleSubmit}>
-              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
                 <div className="grid-2">
                   <div className="input-group">
                     <label className="input-label">Select Driver</label>
@@ -623,7 +687,7 @@ export default function AttendanceView() {
                   </div>
 
                   <div className="input-group">
-                    <label className="input-label">Attendance Date</label>
+                    <label className="input-label">Date</label>
                     <input 
                       type="date"
                       className="input-control"
@@ -684,7 +748,7 @@ export default function AttendanceView() {
                 {formData.status === 'Present' && (
                   <div className="grid-2">
                     <div className="input-group">
-                      <label className="input-label">Shift Login Time (Kab Login Hua)</label>
+                      <label className="input-label">Login Time</label>
                       <input 
                         type="text"
                         placeholder="e.g. 06:00 AM"
@@ -695,7 +759,7 @@ export default function AttendanceView() {
                       />
                     </div>
                     <div className="input-group">
-                      <label className="input-label">Shift Logout Time (Kab Logout Hua)</label>
+                      <label className="input-label">Logout Time</label>
                       <input 
                         type="text"
                         placeholder="e.g. 02:30 PM"
@@ -721,7 +785,7 @@ export default function AttendanceView() {
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#c2410c', fontWeight: 800 }}>
                       <AlertCircle size={18} />
-                      <span>Driver Absent Handling & Supervisor Payment Input</span>
+                      <span>Driver Absent Handling & Replacement Payout</span>
                     </div>
 
                     <div className="input-group">
@@ -774,7 +838,7 @@ export default function AttendanceView() {
                       </label>
                     </div>
 
-                    {/* If Ad-hoc Option: DIRECT SUPERVISOR PAYMENT INPUT */}
+                    {/* If Ad-hoc Option: DIRECT PAYMENT INPUT */}
                     {formData.isAdhocReplacement && (
                       <div style={{
                         background: '#ffffff',
@@ -788,7 +852,7 @@ export default function AttendanceView() {
                         <div className="grid-2">
                           <div className="input-group">
                             <label className="input-label" style={{ color: '#c2410c', fontWeight: 800 }}>
-                              Payment Input / Cost (Kitne Paise Hore) (₹) *
+                              Payment Amount (Iske Kitne Paise Hore) (₹) *
                             </label>
                             <input 
                               type="number"
