@@ -543,19 +543,20 @@ export function FleetProvider({ children }) {
     return saved ? JSON.parse(saved) : DEFAULT_SUPERVISORS;
   });
 
-  // Authenticated user session
+  // Authenticated user session - Default to null so Login screen ALWAYS opens first!
   const [currentUser, setCurrentUser] = useState(() => {
-    const saved = localStorage.getItem('fleet_auth_user_v3');
-    return saved ? JSON.parse(saved) : {
-      role: 'admin',
-      id: 'USR-ADMIN',
-      username: 'admin',
-      name: 'Super Administrator',
-      email: 'admin@amazelogistics.com',
-      supervisorId: null,
-      hub: 'Central Command HQ'
-    };
+    const saved = sessionStorage.getItem('amaze_fleet_session_v5');
+    return saved ? JSON.parse(saved) : null;
   });
+
+  // Save authenticated session
+  useEffect(() => {
+    if (currentUser) {
+      sessionStorage.setItem('amaze_fleet_session_v5', JSON.stringify(currentUser));
+    } else {
+      sessionStorage.removeItem('amaze_fleet_session_v5');
+    }
+  }, [currentUser]);
 
   // Admin Supervisor Filter (Admin can filter view by specific supervisor or 'all')
   const [adminSupervisorFilter, setAdminSupervisorFilter] = useState('all');
